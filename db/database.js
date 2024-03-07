@@ -114,9 +114,21 @@ const addUser =  function(user) {
  * @param {string} guest_id The id of the user.
  * @return {Promise<[{}]>} A promise to the reservations.
  */
-const getAllReservations = function (guest_id, limit = 10) {
-  return getAllProperties(null, 2);
-};
+const getAllReservations = function(guest_id, limit = 10) {
+  const promise = pool
+  .query(
+    "SELECT * FROM reservations WHERE guest_id = $1 LIMIT $2", [ guest_id, limit])
+    .then(res => {
+      return res.rows
+    })
+    .catch(err => {
+      console.log(err)
+    })
+
+
+  
+  return promise
+}
 
 /// Properties
 
@@ -134,17 +146,69 @@ const getAllReservations = function (guest_id, limit = 10) {
   return Promise.resolve(limitedProperties);
 }; */
 
-const getAllProperties = (options, limit = 10) => {
+const getAllProperties = function(options, limit = 10) {
+  const queryParams = [];
+  let queryString = 
+  "SELECT properties.*, AVG(property_reviews.rating) AS average_rating, count(property_reviews.rating) as review_count\
+  FROM properties\
+  JOIN property_reviews ON properties.id = property_reviews.property_id\
+  "
+
+  if(options.city || options.owner_id || options.minimum_price_per_night && options.maximum_price_per_night){
+    queryString += 'WHERE'
+  }
+
+  if (options.city) {
+    queryParams.push(`%${options.city}%`);
+    queryString += ` city LIKE $${queryParams.length} `;
+  }
+
+  if (options.owner_id) {
+    if(options.city) {
+      queryString +=  `AND`
+    }
+    queryParams.push(`${options.owner_id}`);
+    queryString +=  ` owner_id = $${queryParams.length} `;
+  }
+
+
+  if (options.minimum_price_per_night && options.maximum_price_per_night) {
+    if(options.city || options.owner_id){
+      queryString +=  `AND`
+    }
+    let minPrice = options.minimum_price_per_night * 100
+    let maxPrice = options.maximum_price_per_night * 100
+
+    queryParams.push(`${minPrice}`);
+    queryParams.push(`${maxPrice}`);
+
+    queryString += ` (properties.cost_per_night > $${queryParams.length-1} AND properties.cost_per_night < $${queryParams.length})`;
+  }
+
+  queryString += ' GROUP BY properties.id'
+
+  if (options.minimum_rating) {
+    queryParams.push(`${options.minimum_rating}`);
+    queryString += ` HAVING AVG(property_reviews.rating) >= $${queryParams.length} `;
+  }
+
+  queryParams.push(limit);
+  queryString += `
+  ORDER BY cost_per_night
+  LIMIT $${queryParams.length};
+  `;
+
   return pool
-    .query(`SELECT * FROM properties LIMIT $1`, [limit])
+    .query(
+      queryString,
+      queryParams)
     .then((result) => {
-      console.log(result.rows);
       return result.rows;
-    })
+      })
     .catch((err) => {
       console.log(err.message);
-    });
-};
+      });
+}
 
 
 
@@ -153,12 +217,39 @@ const getAllProperties = (options, limit = 10) => {
  * @param {{}} property An object containing all of the property details.
  * @return {Promise<{}>} A promise to the property.
  */
-const addProperty = function (property) {
-  const propertyId = Object.keys(properties).length + 1;
-  property.id = propertyId;
-  properties[propertyId] = property;
-  return Promise.resolve(property);
-};
+const addProperty = function(property) {
+  const queryParams = [
+    property.owner_id, 
+    property.title, 
+    property.description, 
+    property.thumbnail_photo_url, 
+    property.cover_photo_url, 
+    property.cost_per_night, 
+    property.street, 
+    property.city,
+    property.province, 
+    property.post_code, 
+    property.country, 
+    property.parking_spaces, 
+    property.number_of_bathrooms, 
+    property.number_of_bedrooms];
+
+  let queryString = 
+  "INSERT INTO properties (owner_id, title, description, thumbnail_photo_url, cover_photo_url, cost_per_night, street, city, province, post_code, country, parking_spaces,\ number_of_bathrooms, number_of_bedrooms)\
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)\
+  RETURNING *;"
+
+  return pool
+    .query(
+      queryString,
+      queryParams)
+    .then((result) => {
+      return result.rows;W
+      })
+    .catch((err) => {
+      console.log(err.message);
+      });
+}
 
 module.exports = {
   getUserWithEmail,
